@@ -21,7 +21,7 @@
 
 namespace pocketmine;
 
-const NAME = "PocketMine-MP";
-const BASE_VERSION = "3.9.8";
-const IS_DEVELOPMENT_BUILD = true;
+const NAME = "ExynosX";
+const BASE_VERSION = "3.9.0";
+const IS_DEVELOPMENT_BUILD = false;
 const BUILD_NUMBER = 0;
