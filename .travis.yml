@@ -23,3 +23,10 @@ script:
 
 notifications:
  email: false
+ 
+ deploy:
+  provider: releases
+  api_key: "GITHUB OAUTH TOKEN"
+  file: "PocketMine-MP.phar"
+  skip_cleanup: true
+  draft: true
