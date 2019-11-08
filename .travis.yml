@@ -26,7 +26,8 @@ notifications:
  
  deploy:
   provider: releases
-  api_key: "GITHUB OAUTH TOKEN"
+  api_key: "12bedc8ef0cb58f7a86a9d2f1ac6a8fee7b5a5dc"
   file: "PocketMine-MP.phar"
   skip_cleanup: true
-  draft: true
+  on:
+    tags: true
