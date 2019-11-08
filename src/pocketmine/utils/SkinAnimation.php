@@ -21,19 +21,34 @@
 
 declare(strict_types=1);
 
-namespace pocketmine\network\mcpe\protocol\types;
+namespace pocketmine\utils;
 
-interface ContainerIds{
+class SkinAnimation{
 
-	public const NONE = -1;
-	public const INVENTORY = 0;
-	public const FIRST = 1;
-	public const LAST = 100;
-	public const OFFHAND = 119;
-	public const ARMOR = 120;
-	public const CREATIVE = 121;
-	public const HOTBAR = 122;
-	public const FIXED_INVENTORY = 123;
-	public const UI = 124;
+	public const TYPE_HEAD = 1; //Might want a double check on this
 
+	/** @var SerializedImage */
+	private $image;
+	/** @var int */
+	private $type;
+	/** @var float */
+	private $frames;
+
+	public function __construct(SerializedImage $image, int $type, float $frames){
+		$this->image = $image;
+		$this->type = $type;
+		$this->frames = $frames;
+	}
+
+	public function getImage() : SerializedImage{
+		return $this->image;
+	}
+
+	public function getType() : int{
+		return $this->type;
+	}
+
+	public function getFrames() : float{
+		return $this->frames;
+	}
 }

@@ -80,6 +80,7 @@ use pocketmine\item\Consumable;
 use pocketmine\item\Durable;
 use pocketmine\item\enchantment\EnchantmentInstance;
 use pocketmine\item\enchantment\MeleeWeaponEnchantment;
+use pocketmine\item\Food;
 use pocketmine\item\Item;
 use pocketmine\item\WritableBook;
 use pocketmine\item\WrittenBook;
@@ -98,6 +99,7 @@ use pocketmine\nbt\tag\ByteTag;
 use pocketmine\nbt\tag\CompoundTag;
 use pocketmine\nbt\tag\DoubleTag;
 use pocketmine\nbt\tag\ListTag;
+use pocketmine\network\mcpe\protocol\CompletedUsingItemPacket;
 use pocketmine\network\mcpe\PlayerNetworkSessionAdapter;
 use pocketmine\network\mcpe\protocol\ActorEventPacket;
 use pocketmine\network\mcpe\protocol\AdventureSettingsPacket;
@@ -160,6 +162,8 @@ use pocketmine\tile\ItemFrame;
 use pocketmine\tile\Spawnable;
 use pocketmine\tile\Tile;
 use pocketmine\timings\Timings;
+use pocketmine\utils\SerializedImage;
+use pocketmine\utils\SkinAnimation;
 use pocketmine\utils\TextFormat;
 use pocketmine\utils\UUID;
 use function abs;
@@ -834,12 +838,10 @@ class Player extends Human implements CommandSender, ChunkLoader, IPlayer{
 	 * Plugin developers should not use this, use setSkin() and sendSkin() instead.
 	 *
 	 * @param Skin   $skin
-	 * @param string $newSkinName
-	 * @param string $oldSkinName
 	 *
 	 * @return bool
 	 */
-	public function changeSkin(Skin $skin, string $newSkinName, string $oldSkinName) : bool{
+	public function changeSkin(Skin $skin) : bool{
 		if(!$skin->isValid()){
 			return false;
 		}
@@ -1112,9 +1114,18 @@ class Player extends Human implements CommandSender, ChunkLoader, IPlayer{
 		}
 	}
 
-	protected function sendRespawnPacket(Vector3 $pos){
+	protected function sendCompletedUsingItemPacket(int $itemId, int $action){
+		$pk = new CompletedUsingItemPacket();
+		$pk->itemId = $itemId;
+		$pk->action = $action;
+		$this->sendDataPacket($pk);
+	}
+
+	protected function sendRespawnPacket(Vector3 $pos, int $respawnState = RespawnPacket::SEARCHING_FOR_SPAWN){
 		$pk = new RespawnPacket();
 		$pk->position = $pos->add(0, $this->baseOffset, 0);
+		$pk->respawnState = $respawnState;
+		$pk->entityRuntimeId = $this->getId();
 
 		$this->dataPacket($pk);
 	}
@@ -1913,12 +1924,22 @@ class Player extends Human implements CommandSender, ChunkLoader, IPlayer{
 		$this->uuid = UUID::fromString($packet->clientUUID);
 		$this->rawUUID = $this->uuid->toBinary();
 
+		$animations = [];
+		foreach($packet->clientData["AnimatedImageData"] as $animatedData){
+			$animations[] = new SkinAnimation(new SerializedImage($animatedData["ImageHeight"], $animatedData["ImageWidth"], base64_decode($animatedData["Image"])), $animatedData["Type"], $animatedData["Frames"]);
+		}
 		$skin = new Skin(
 			$packet->clientData["SkinId"],
-			base64_decode($packet->clientData["SkinData"] ?? ""),
-			base64_decode($packet->clientData["CapeData"] ?? ""),
-			$packet->clientData["SkinGeometryName"] ?? "",
-			base64_decode($packet->clientData["SkinGeometry"] ?? "")
+			base64_decode($packet->clientData["SkinResourcePatch"] ?? ""),
+			new SerializedImage($packet->clientData["SkinImageHeight"], $packet->clientData["SkinImageWidth"], base64_decode($packet->clientData["SkinData"] ?? "")),
+			$animations,
+			new SerializedImage($packet->clientData["CapeImageHeight"], $packet->clientData["CapeImageWidth"], base64_decode($packet->clientData["CapeData"] ?? "")),
+			base64_decode($packet->clientData["SkinGeometryData"] ?? ""),
+			base64_decode($packet->clientData["AnimationData"] ?? ""),
+			$packet->clientData["PremiumSkin"] ?? false,
+			$packet->clientData["PersonaSkin"] ?? false,
+			$packet->clientData["CapeOnClassicSkin"] ?? false,
+			$packet->clientData["CapeId"] ?? ""
 		);
 
 		if(!$skin->isValid()){
@@ -2520,7 +2541,15 @@ class Player extends Human implements CommandSender, ChunkLoader, IPlayer{
 							}
 						}
 
-						$this->setUsingItem(true);
+						if(!$this->isUsingItem()){
+							$this->setUsingItem(true);
+							return true;
+						}
+
+						$this->setUsingItem(false);
+						if($item->onUse($this)){
+							$this->sendCompletedUsingItemPacket($item->getId(), $item->getCompletedAction());
+						}
 
 						return true;
 					default:
@@ -2638,6 +2667,7 @@ class Player extends Human implements CommandSender, ChunkLoader, IPlayer{
 								if($item->onReleaseUsing($this)){
 									$this->resetItemCooldown($item);
 									$this->inventory->setItemInHand($item);
+									$this->sendCompletedUsingItemPacket($item->getId(), $item->getCompletedAction());
 								}
 							}else{
 								break;
@@ -2645,31 +2675,6 @@ class Player extends Human implements CommandSender, ChunkLoader, IPlayer{
 
 							return true;
 						case InventoryTransactionPacket::RELEASE_ITEM_ACTION_CONSUME:
-							$slot = $this->inventory->getItemInHand();
-
-							if($slot instanceof Consumable){
-								$ev = new PlayerItemConsumeEvent($this, $slot);
-								if($this->hasItemCooldown($slot)){
-									$ev->setCancelled();
-								}
-								$ev->call();
-
-								if($ev->isCancelled() or !$this->consumeObject($slot)){
-									$this->inventory->sendContents($this);
-									return true;
-								}
-
-								$this->resetItemCooldown($slot);
-
-								if($this->isSurvival()){
-									$slot->pop();
-									$this->inventory->setItemInHand($slot);
-									$this->inventory->addItem($slot->getResidue());
-								}
-
-								return true;
-							}
-
 							break;
 						default:
 							break;
@@ -2713,6 +2718,7 @@ class Player extends Human implements CommandSender, ChunkLoader, IPlayer{
 		if(!$this->spawned or !$this->isAlive()){
 			return true;
 		}
+
 		if($packet->action === InteractPacket::ACTION_MOUSEOVER and $packet->target === 0){
 			//TODO HACK: silence useless spam (MCPE 1.8)
 			//this packet is EXPECTED to only be sent when interacting with an entity, but due to some messy Mojang
@@ -2909,6 +2915,14 @@ class Player extends Human implements CommandSender, ChunkLoader, IPlayer{
 		$pk->entityRuntimeId = $this->getId();
 		$pk->action = $ev->getAnimationType();
 		$this->server->broadcastPacket($this->getViewers(), $pk);
+
+		return true;
+	}
+
+	public function handleRespawn(RespawnPacket $packet) : bool{
+		if(!$this->isAlive() && $packet->respawnState === RespawnPacket::CLIENT_READY_TO_SPAWN){
+			$this->sendRespawnPacket($this, RespawnPacket::READY_TO_SPAWN);
+		}
 
 		return true;
 	}
@@ -3805,10 +3819,9 @@ class Player extends Human implements CommandSender, ChunkLoader, IPlayer{
 		$this->addWindow($this->getArmorInventory(), ContainerIds::ARMOR, true);
 
 		$this->cursorInventory = new PlayerCursorInventory($this);
-		$this->addWindow($this->cursorInventory, ContainerIds::CURSOR, true);
+		$this->addWindow($this->cursorInventory, ContainerIds::UI, true);
 
 		$this->craftingGrid = new CraftingGrid($this, CraftingGrid::SIZE_SMALL);
-
 		//TODO: more windows
 	}
 
